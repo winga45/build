@@ -126,10 +126,29 @@ class EdifyGenerator(object):
   def AssertSomeBootloader(self, *bootloaders):
     """Asert that the bootloader version is one of *bootloaders."""
     cmd = ("assert(" +
-           " ||\0".join(['getprop("ro.bootloader") == "%s"' % (b,)
+           " || ".join(['getprop("ro.bootloader") == "%s"' % (b,)
                          for b in bootloaders]) +
            ");")
     self.script.append(self.WordWrap(cmd))
+
+  def FlashSuperSU(self):
+    self.script.append('package_extract_dir("supersu", "/tmp/supersu");')
+    self.script.append('run_program("/sbin/busybox", "unzip", "/tmp/supersu/supersu.zip", "META-INF/com/google/android/*", "-d", "/tmp/supersu");')
+    self.script.append('run_program("/sbin/busybox", "sh", "/tmp/supersu/META-INF/com/google/android/update-binary", "dummy", "1", "/tmp/supersu/supersu.zip");')
+
+  def RunBackup(self, command):
+    self.script.append('package_extract_file("system/bin/backuptool.sh", "/tmp/backuptool.sh");')
+    self.script.append('package_extract_file("system/bin/backuptool.functions", "/tmp/backuptool.functions");')
+    if not self.info.get("use_set_metadata", False):
+      self.script.append('set_perm(0, 0, 0755, "/tmp/backuptool.sh");')
+      self.script.append('set_perm(0, 0, 0644, "/tmp/backuptool.functions");')
+    else:
+      self.script.append('set_metadata("/tmp/backuptool.sh", "uid", 0, "gid", 0, "mode", 0755);')
+      self.script.append('set_metadata("/tmp/backuptool.functions", "uid", 0, "gid", 0, "mode", 0644);')
+    self.script.append(('run_program("/tmp/backuptool.sh", "%s");' % command))
+    if command == "restore":
+        self.script.append('delete("/system/bin/backuptool.sh");')
+        self.script.append('delete("/system/bin/backuptool.functions");')
 
   def ShowProgress(self, frac, dur):
     """Update the progress bar, advancing it over 'frac' over the next
@@ -188,6 +207,12 @@ class EdifyGenerator(object):
           p.fs_type, common.PARTITION_TYPES[p.fs_type], p.device,
           p.mount_point, mount_flags))
       self.mounts.add(p.mount_point)
+
+  def Unmount(self, mount_point):
+    """Unmount the partiiton with the given mount_point."""
+    if mount_point in self.mounts:
+      self.mounts.remove(mount_point)
+      self.script.append('unmount("%s");' % (mount_point,))
 
   def UnpackPackageDir(self, src, dst):
     """Unpack a given directory from the OTA package into the given
